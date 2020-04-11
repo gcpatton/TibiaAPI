@@ -15,18 +15,10 @@ class CharacterController extends Controller
      */
     public function show($name)
     {
-
         $name = urldecode(str_replace(" ", "+", $name));
         $character = [];
         $deaths = [];
         $client = new Client();
-
-        $guzzleClient = new \GuzzleHttp\Client(array(
-            'timeout' => 90,
-            'verify' => false,
-        ));
-
-        $client->setClient($guzzleClient);
 
         try {
             $crawler = $client->request('POST', 'https://www.tibia.com/community/?subtopic=characters', ['name' => $name]);
@@ -42,10 +34,6 @@ class CharacterController extends Controller
                 $rows[] = $tds;
             }
 
-            // This following section is very "hack-y"...
-            // It formats the return array and removes unused table items
-            // returned from the Tibia website...
-
             foreach ($rows as $value) {
                 if (!empty($value[1])) {
                     if ($value[0] == "Name")
@@ -54,7 +42,19 @@ class CharacterController extends Controller
                     if ($value[0] == "")
                         $character["Achievements"][] = $value[1];
 
-                    $character[substr_replace($value[0], "", -1)] = trim($value[1]);
+                    $is_death = preg_match('/CET|CEST/i', $value[0]);
+                    $key = $is_death ? $value[0] : substr_replace($value[0], "", -1);
+
+                    if (strpos($key, "House") !== false) {
+                        $character[$key][] = trim($value[1]);
+                    } else if ($is_death) {
+                        $character['Deaths'][] = array(
+                            'Date' => trim($value[0]),
+                            'Reason' => trim($value[1]),
+                        );
+                    } else {
+                        $character[$key] = trim($value[1]);
+                    }
                 }
                 if (strpos($value[0], "does not exist.") !== false) {
                     return response()->json(["error" => ["code" => 404, "message" => "Not found."]], 404);
@@ -62,10 +62,7 @@ class CharacterController extends Controller
             }
 
             foreach ($character as $key => $value) {
-                if (strpos($key, "CET") !== false) {
-                    $deaths[$key] = $value;
-                    unset($character[$key]);
-                }
+                
                 if (is_string($value) && strpos($value, "Name:") !== false) {
                     unset($character[$key]);
                 }
@@ -77,9 +74,13 @@ class CharacterController extends Controller
                 }
             }
 
-            $character["Comment"] =  preg_replace("/\r|\n/", " ", $character["Comment"]);
+            if (array_key_exists('Comment', $character))
+            {
+                $character["Comment"] =  preg_replace("/\r|\n/", " ", $character["Comment"]);
+            }
+            
             unset($character[""]);
-            $character["Deaths"] = $deaths;
+            // $character["Deaths"] = $deaths;
 
             return response()->json($character, 200, [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         } catch (Guzzle\Http\Exception\BadResponseException $e) {
